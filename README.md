@@ -13,6 +13,7 @@ A robust FastAPI backend for a toll management system with an in-memory SQLite d
 - Subscription plans
 - Traffic data and dynamic pricing
 - Notification system
+- Indian Standard Time (IST) time zone support
 
 ## Database Schema
 
@@ -32,19 +33,21 @@ The application uses an in-memory SQLite database with the following tables:
 
 ### Prerequisites
 
-- Python 3.8+ is required
+- Python 3.11+ is required (avoid Python 3.13 due to compatibility issues)
 - pip for package installation
 
 ### Installation
 
 1. Clone the repository
-2. Navigate to the backend directory:
    ```
-   cd backend
+   git clone https://github.com/yourusername/tolleasy-backend.git
+   cd tolleasy-backend
    ```
-3. Install dependencies:
+
+2. Run the installation script to set up the virtual environment and dependencies:
    ```
-   pip install -r requirements.txt
+   chmod +x install_dependencies.sh
+   ./install_dependencies.sh
    ```
 
 ### Running the Application
@@ -52,7 +55,8 @@ The application uses an in-memory SQLite database with the following tables:
 Start the FastAPI server:
 
 ```
-uvicorn main:app --reload
+chmod +x run.sh
+./run.sh
 ```
 
 The API will be available at http://localhost:8000
@@ -116,4 +120,11 @@ These endpoints would typically be restricted to admin users:
 - `PUT /api/admin/toll-plazas/{toll_plaza_id}`: Update a toll plaza
 - `POST /api/admin/plans`: Create a subscription plan
 - `PUT /api/admin/plans/{plan_id}`: Update a subscription plan
-- `POST /api/admin/traffic-data`: Submit traffic data for a toll plaza 
+- `POST /api/admin/traffic-data`: Submit traffic data for a toll plaza
+
+## Technical Notes
+
+- All timestamps use Indian Standard Time (IST) instead of UTC
+- In-memory SQLite database (data is lost when the server stops)
+- JWT authentication with token expiration
+- Password hashing with bcrypt 

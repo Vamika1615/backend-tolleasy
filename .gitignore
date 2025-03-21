@@ -30,6 +30,7 @@ var/
 # Virtual Environment
 venv/
 ENV/
+.venv/
 
 # IDE files
 .idea/
@@ -49,4 +50,14 @@ npm-debug.log*
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Thumbs.db 
+Thumbs.db
+
+# SQLite database
+*.db
+*.sqlite
+*.sqlite3
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/ 
