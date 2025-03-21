@@ -1,0 +1,37 @@
+TollEasy Backend - Dummy User Credentials
+==========================================
+
+All dummy users share the same password: password123
+
+The application automatically creates 20 random users with the following format:
+- Email: firstname.lastname###@domain.com (### is a random number)
+- Password: password123
+
+Example users:
+1. aarav.sharma123@gmail.com / password123
+2. divya.patel456@outlook.com / password123
+3. krishna.iyer789@yahoo.com / password123
+
+Notes:
+- Each user has 1-3 vehicles
+- Each user has 0-2 payment methods
+- Each user has a random balance between ₹200 and ₹5000
+- About 90% of users have a subscription plan
+
+You can use any of these random accounts to log in, or you can check the actual generated accounts by looking at the console output when the server starts.
+
+For testing API endpoints directly:
+1. Use the /api/token endpoint to get a JWT token:
+   ```
+   curl -X 'POST' \
+     'http://localhost:8000/api/token' \
+     -H 'Content-Type: application/x-www-form-urlencoded' \
+     -d 'username=aarav.sharma123@gmail.com&password=password123'
+   ```
+
+2. Include the token in the Authorization header for authenticated requests:
+   ```
+   curl -X 'GET' \
+     'http://localhost:8000/api/users/me' \
+     -H 'Authorization: Bearer YOUR_TOKEN_HERE'
+   ``` 

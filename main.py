@@ -4,10 +4,12 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import timedelta
+from pydantic import BaseModel
 
 import crud
 import models
 import schemas
+import googlemapsapi
 from database import get_db, init_db
 from auth import (
     authenticate_user,
@@ -15,6 +17,8 @@ from auth import (
     get_current_active_user,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
+from dummy_data import create_dummy_data
+from export_dummy_data import export_database_to_sql
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -36,6 +40,8 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
     init_db()
+    # Load dummy data if the database is empty
+    create_dummy_data()
 
 # Authentication endpoints
 @app.post("/api/token", response_model=schemas.Token)
@@ -413,3 +419,195 @@ def mark_all_notifications_as_read_endpoint(
 ):
     crud.mark_all_notifications_as_read(db=db, user_id=current_user.id)
     return {"message": "All notifications marked as read"}
+
+# GoogleMaps API integration endpoints
+
+# Models for GoogleMaps API requests
+class TrafficRequest(BaseModel):
+    location: str
+
+class RouteRequest(BaseModel):
+    origin: str
+    destination: str
+
+class NearbyTollPlazasRequest(BaseModel):
+    location: str
+    radius: Optional[int] = 10000  # Default 10km
+
+# Traffic data endpoint
+@app.post("/api/maps/traffic")
+def get_traffic_data(
+    request: TrafficRequest,
+    current_user: models.User = Depends(get_current_active_user)
+):
+    traffic_data = googlemapsapi.get_traffic_details(request.location)
+    
+    if "error" in traffic_data:
+        raise HTTPException(status_code=400, detail=traffic_data["error"])
+        
+    return traffic_data
+
+# Route information endpoint
+@app.post("/api/maps/route")
+def get_route_data(
+    request: RouteRequest,
+    current_user: models.User = Depends(get_current_active_user)
+):
+    route_data = googlemapsapi.get_route(request.origin, request.destination)
+    
+    if "error" in route_data:
+        raise HTTPException(status_code=400, detail=route_data["error"])
+        
+    return route_data
+
+# Nearby toll plazas endpoint
+@app.post("/api/maps/nearby-toll-plazas")
+def get_nearby_toll_plazas_data(
+    request: NearbyTollPlazasRequest,
+    current_user: models.User = Depends(get_current_active_user)
+):
+    toll_plazas_data = googlemapsapi.get_nearby_toll_plazas(request.location, request.radius)
+    
+    if "error" in toll_plazas_data:
+        raise HTTPException(status_code=400, detail=toll_plazas_data["error"])
+        
+    return toll_plazas_data
+
+# Public toll plazas search endpoint (no authentication required)
+@app.get("/api/public/toll-plazas/search")
+def search_toll_plazas(
+    query: str,
+    db: Session = Depends(get_db)
+):
+    # Simple search implementation - in a real app you might use more sophisticated search
+    toll_plazas = db.query(models.TollPlaza).filter(
+        models.TollPlaza.name.ilike(f"%{query}%") | 
+        models.TollPlaza.address.ilike(f"%{query}%") |
+        models.TollPlaza.location.ilike(f"%{query}%")
+    ).all()
+    
+    return toll_plazas
+
+# Public toll pricing endpoint (no authentication required)
+@app.get("/api/public/toll-plazas/{toll_plaza_id}/pricing")
+def get_toll_pricing(
+    toll_plaza_id: int,
+    vehicle_type: schemas.VehicleType,
+    db: Session = Depends(get_db)
+):
+    toll_plaza = crud.get_toll_plaza(db, toll_plaza_id=toll_plaza_id)
+    if toll_plaza is None:
+        raise HTTPException(status_code=404, detail="Toll Plaza not found")
+    
+    # Apply vehicle type multiplier
+    multipliers = {
+        schemas.VehicleType.CAR: 1.0,
+        schemas.VehicleType.MOTORCYCLE: 0.5,
+        schemas.VehicleType.TRUCK: 2.0,
+        schemas.VehicleType.BUS: 1.5,
+        schemas.VehicleType.OTHER: 1.0
+    }
+    
+    vehicle_multiplier = multipliers.get(vehicle_type, 1.0)
+    final_price = toll_plaza.current_price * vehicle_multiplier
+    
+    return {
+        "toll_plaza_id": toll_plaza.id,
+        "toll_plaza_name": toll_plaza.name,
+        "base_price": toll_plaza.base_price,
+        "current_price": toll_plaza.current_price,
+        "vehicle_type": vehicle_type,
+        "vehicle_multiplier": vehicle_multiplier,
+        "final_price": final_price,
+        "busy_level": toll_plaza.busy_level,
+        "estimated_wait_time": toll_plaza.estimated_time
+    }
+
+# User statistics endpoint
+@app.get("/api/users/me/statistics")
+def get_user_statistics(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    # Get all transactions for the user
+    transactions = crud.get_transactions_by_user(db, user_id=current_user.id)
+    
+    # Get all vehicles for the user
+    vehicles = crud.get_vehicles_by_user(db, user_id=current_user.id)
+    
+    # Calculate statistics
+    total_toll_payments = sum(t.amount for t in transactions if t.transaction_type == "toll payment" and t.status == "completed")
+    total_trips = len([t for t in transactions if t.transaction_type == "toll payment" and t.status == "completed"])
+    
+    # Get most used vehicle
+    vehicle_usage = {}
+    for t in transactions:
+        if t.transaction_type == "toll payment" and t.status == "completed":
+            vehicle_usage[t.vehicle_id] = vehicle_usage.get(t.vehicle_id, 0) + 1
+    
+    most_used_vehicle_id = max(vehicle_usage.items(), key=lambda x: x[1])[0] if vehicle_usage else None
+    most_used_vehicle = next((v for v in vehicles if v.id == most_used_vehicle_id), None) if most_used_vehicle_id else None
+    
+    return {
+        "user_id": current_user.id,
+        "current_balance": current_user.current_balance,
+        "total_vehicles": len(vehicles),
+        "active_vehicles": len([v for v in vehicles if v.is_active]),
+        "total_toll_payments": total_toll_payments,
+        "total_trips": total_trips,
+        "average_toll_payment": total_toll_payments / total_trips if total_trips > 0 else 0,
+        "most_used_vehicle": {
+            "id": most_used_vehicle.id,
+            "license_plate": most_used_vehicle.license_plate,
+            "make": most_used_vehicle.make,
+            "model": most_used_vehicle.model
+        } if most_used_vehicle else None
+    }
+
+# User monthly transaction report
+@app.get("/api/users/me/monthly-report")
+def get_monthly_report(
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    # Get all transactions for the user in the specified month
+    transactions = crud.get_transactions_by_user(db, user_id=current_user.id)
+    
+    # Filter transactions for the specified month
+    filtered_transactions = [
+        t for t in transactions 
+        if t.timestamp.year == year and t.timestamp.month == month
+    ]
+    
+    # Calculate statistics
+    total_toll_payments = sum(t.amount for t in filtered_transactions if t.transaction_type == "toll payment" and t.status == "completed")
+    total_trips = len([t for t in filtered_transactions if t.transaction_type == "toll payment" and t.status == "completed"])
+    
+    # Get transactions by day of month
+    transactions_by_day = {}
+    for t in filtered_transactions:
+        if t.transaction_type == "toll payment" and t.status == "completed":
+            day = t.timestamp.day
+            transactions_by_day[day] = transactions_by_day.get(day, 0) + t.amount
+    
+    # Format the response
+    daily_data = [{"day": day, "amount": amount} for day, amount in transactions_by_day.items()]
+    
+    return {
+        "user_id": current_user.id,
+        "year": year,
+        "month": month,
+        "total_toll_payments": total_toll_payments,
+        "total_trips": total_trips,
+        "average_toll_payment": total_toll_payments / total_trips if total_trips > 0 else 0,
+        "daily_data": daily_data
+    }
+
+# Admin endpoint to export database
+@app.get("/api/admin/export-data")
+def export_database_endpoint(current_user: models.User = Depends(get_current_active_user)):
+    # In a real app, you'd check if the user is an admin here
+    result = export_database_to_sql()
+    return {"message": result}
